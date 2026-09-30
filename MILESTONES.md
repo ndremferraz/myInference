@@ -11,7 +11,7 @@ Build a JAX-based LLM inference engine capable of serving open-source models suc
 Implement a complete decoder-only Transformer forward pass. Use [HuggingFaceTB/SmolLM2-135M](https://huggingface.co/HuggingFaceTB/SmolLM2-135M) as reference.
 
 ### Build
-- [ ] MLP
+- [x] MLP
 - [ ] Attention
 - [ ] Transformer block
 - [ ] Multi-layer Transformer
