@@ -37,6 +37,8 @@ The Original Attention Mechanism from *Attention is All You Need* ignores the re
 
 Note: This is not something exclusive to RoPE, but after the *Attention is All You Need* incorporating positional encoding to the transformer blocks rather than exclusively at the bottom of the Encoder/Decoder Stack became a trend. 
 
+RoPE is a fairly complex concept, so I recommend watching this [Video](https://www.youtube.com/watch?v=GQPOtyITy54). The underlying principle is to rotate(via rotation matrix) the embedding vectors by an angle that is proportional to their position. The intuition is the vectors with a greater angle between them have a lesser dot product.   
+
 
 
 
