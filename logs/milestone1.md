@@ -52,7 +52,7 @@ q_{j+1}
 \end{bmatrix}
 $$
 
-where $$m$$ is the respective position of the token in the sequence and $$i = 1,2,..,d/2$$, such that every two dimensions $$j$$ and $$j+1$$ will have their own rotation angles. The formula for theta is the following:
+where $$m$$ is the respective position of the token in the sequence and $$i = 0,1,2,..,{{d/2}-1}$$, such that every two dimensions $$j$$ and $$j+1$$ will have their own rotation angles. The formula for theta is the following:
 
 $$
 theta_i = 10000^{-2i/d}
