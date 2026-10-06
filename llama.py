@@ -61,14 +61,17 @@ class SiLU(Module):
 
 
 class FFNSwiGLU(Module):
-    def __init__(self, params: np.ndarray):
+    def __init__(self,
+                 w_up: np.ndarray,
+                 w_gate: np.ndarray,
+                 w_down: np.ndarray):
         
         super().__init__()
 
         self.act_fn = SiLU()
-        self.up_proj = Linear(params)
-        self.gate_proj = Linear(params)
-        self.down_proj = Linear(params)
+        self.up_proj = Linear(w_up)
+        self.gate_proj = Linear(w_gate)
+        self.down_proj = Linear(w_down)
 
     def __call__(self, x: jnp.ndarray):
 
@@ -82,13 +85,13 @@ class FFNSwiGLU(Module):
 
 
 class AttentionRoPE(Module):
-    def __init__(   self, 
-                    dims: int, 
-                    wq = np.ndarray,
-                    wk = np.ndarray,
-                    wv = np.ndarray,
-                    wo = np.ndarray,
-                 ):
+    def __init__(self, 
+                 dims: int, 
+                 wq = np.ndarray,
+                 wk = np.ndarray,
+                 wv = np.ndarray,
+                 wo = np.ndarray):
+        
         super().__init__()
 
         self.dims = dims
@@ -98,10 +101,10 @@ class AttentionRoPE(Module):
         self.v_proj = Linear(weights=wv)
         self.o_proj = Linear(weights=wo)
 
-    def __call__(   self, 
-                    x: jnp.ndarray,
-                    rope_matrix: jnp.ndarray, 
-                    attention_mask: jnp.ndarray):
+    def __call__(self, 
+                 x: jnp.ndarray,
+                 rope_matrix: jnp.ndarray, 
+                 attention_mask: jnp.ndarray):
 
         cos, sin = rope_matrix
 
@@ -134,3 +137,49 @@ class LlamaRMSNorm(Module):
         x_normalized = x / jnp.sqrt(variance + self.eps)
 
         return x_normalized * self.weight
+
+
+class LLamaTransformer(Module):
+    def __init__(self,
+                 wq: np.ndarray,
+                 wk: np.ndarray,
+                 wv: np.ndarray,
+                 wo: np.ndarray,
+                 w_up: np.ndarray,
+                 w_gate: np.ndarray,
+                 w_down: np.ndarray,
+                 rms_norm_eps: float = 1e-8,
+                 hidden_size: int = 512,
+                 ):
+        super().__init__()
+
+        self.attention = AttentionRoPE(dims=hidden_size,
+                                       wq = wq,
+                                       wk = wk,
+                                       wv = wv,
+                                       wo = wo)
+        
+        self.ffn = FFNSwiGLU(w_up=w_up, 
+                             w_gate=w_gate, 
+                             w_down=w_down)
+
+        self.input_layernorm = LlamaRMSNorm(eps=rms_norm_eps, hidden_size=hidden_size)
+        self.post_attention_layernorm = LlamaRMSNorm(eps=rms_norm_eps, hidden_size=hidden_size)
+
+    def __call__(self, x: jnp.ndarray, rope_matrix: jnp.ndarray, attention_mask: jnp.ndarray):
+
+        residual = x
+        x = self.input_layernorm(x)
+
+        x = self.attention(x, rope_matrix, attention_mask)
+        x = residual + x
+
+        residual = x
+
+        x = self.post_attention_layernorm(x)
+        x = self.ffn(x)
+
+        x = residual + x
+
+        return x
+
