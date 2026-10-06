@@ -4,8 +4,7 @@ import numpy as np
 
 from module import Module, Linear
 
-def rotate_half(    x: jnp.ndarray
-                    ):
+def rotate_half(x: jnp.ndarray):
 
     x1 = x[..., : x.shape[-1] // 2]
     x2 = x[..., x.shape[-1] // 2:]
@@ -28,10 +27,7 @@ def apply_rope(     q: jnp.ndarray,
 
 
 class RotaryEmbedding(Module):
-    def __init__(   self, 
-                    dims: int, 
-                    rope_theta: float
-                    ):
+    def __init__(self, dims: int, rope_theta: float):
         
         super().__init__()
 
@@ -40,17 +36,11 @@ class RotaryEmbedding(Module):
         self.frequencies = self._compute_frequencies(dims, rope_theta)
 
     @staticmethod
-    def _compute_frequencies(
-                    dims: int, 
-                    rope_theta: float
-                    ):
+    def _compute_frequencies(dims: int, rope_theta: float):
             
         return rope_theta ** ( (-1) * jnp.arange(0, dims, 2) )
 
-    def __call__(   self, 
-                    x: jnp.ndarray, 
-                    position_ids: jnp.ndarray
-                    ):
+    def __call__(self, x: jnp.ndarray, position_ids: jnp.ndarray):
 
         position_ids_expanded = jnp.expand_dims(position_ids, axis=-1)
         freqs = jnp.repeat(self.frequencies, repeats=2, axis=-1)
@@ -64,16 +54,14 @@ class SiLU(Module):
     def __init__(self):
         super().__init__()
 
-    def __call__(   self, 
-                    x: jnp.ndarray):
+    def __call__(self, x: jnp.ndarray):
 
         sigmoid = 1.0 / (1.0 + jnp.exp(-x))
         return x * sigmoid
 
 
 class FFNSwiGLU(Module):
-    def __init__(   self,
-                    params: np.ndarray):
+    def __init__(self, params: np.ndarray):
         
         super().__init__()
 
@@ -82,8 +70,7 @@ class FFNSwiGLU(Module):
         self.gate_proj = Linear(params)
         self.down_proj = Linear(params)
 
-    def __call__(   self, 
-                    x: jnp.ndarray):
+    def __call__(self, x: jnp.ndarray):
 
         up = self.up_proj(x)
         gate = self.gate_proj(x)
@@ -134,9 +121,7 @@ class AttentionRoPE(Module):
 
 
 class LlamaRMSNorm(Module):
-    def __init__(   self, 
-                    eps: float = 1e-8, 
-                    hidden_size: int = 512):
+    def __init__(self, eps: float = 1e-8, hidden_size: int = 512):
         
         super().__init__()
 
