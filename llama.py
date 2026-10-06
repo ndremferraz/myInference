@@ -14,7 +14,7 @@ class SiLU(Module):
         sigmoid = 1.0 / (1.0 + jnp.exp(-x))
         return x * sigmoid
 
-class MLPSwiGLU(Module):
+class FFNSwiGLU(Module):
     def __init__(self, params: np.ndarray):
         super().__init__()
 
@@ -70,9 +70,15 @@ class AttentionRoPE(Module):
 
 
 class LlamaRMSNorm(Module):
-    def __init__(self, params: np.ndarray):
+    def __init__(self, eps: float = 1e-8, hidden_size: int = 512):
         super().__init__()
 
+        self.eps = eps
+        self.weight = jnp.ones((hidden_size))
+
     def __call__(self, x: jnp.ndarray):
-        # Implementation for Llama RMSNorm
-        raise NotImplementedError
+
+        variance = jnp.mean(x**2, axis=-1, keepdims=True)
+        x_normalized = x / jnp.sqrt(variance + self.eps)
+
+        return x_normalized * self.weight
