@@ -107,22 +107,20 @@ $$
 ## [SwiGLU FFN](https://arxiv.org/pdf/2002.05202)
 
 A SwiGLU FFN is an alternative to the feed-forward network proposed by the *Attention is All You Need Paper*. The original version used:
-$$
-FFN(x,W_1, W_2, b_1, b_2) = ReLU(xW_1 + b_1)W_2 + b_2
-$$
+
+$$FFN(x,W_1, W_2, b_1, b_2) = ReLU(xW_1 + b_1)W_2 + b_2$$
+
 And some more recent variants turned it into by simply ignoring the bias terms:
-$$
-FFN(x,W_1, W_2) = ReLU(xW_1)W_2
-$$
+
+$$FFN(x,W_1, W_2) = ReLU(xW_1)W_2$$
 
 SwiGLU replaces the ReLU activation function with a GLU(Gated Linear Unit), which consists of the element-wise multiplication of two linear projections where one of them is subject to an activation function $f$:
-$$
-GLU(x,W,V) = f(xW) \odot xV
-$$
+
+$$GLU(x,W,V) = f(xW) \odot xV$$
+
 and SwiGLU is a Gated Linear Unit that uses $SiLU_\beta(x) = x\sigma(\beta x)$:
-$$
-FFN_{SwiGLU}(x,W,V,W_2) = (SiLU(xW) \odot xV)W_2
-$$
+
+$$FFN_{SwiGLU}(x,W,V,W_2) = (SiLU(xW) \odot xV)W_2$$
 
 It can be visually displayed as the following:
 ```mermaid
@@ -152,22 +150,21 @@ flowchart LR
 ## [RMSNorm](https://arxiv.org/pdf/1910.07467)
 
 In LayerNorm. We take the output of the linear layer:
-$$
-a_i = \sum^n_{j=1}{w_{ij}x_j}
-$$ 
+
+$$a_i = \sum^n_{j=1}{w_{ij}x_j}$$
+
 and we apply a normalization where we center by the mean and scale it by the variance:
-$$
-\tilde a_i = \frac{a_i - \mu}{\sigma}
-$$
+
+$$\tilde a_i = \frac{a_i - \mu}{\sigma}$$
+
 The main idea behind that is reduce the effects of *internal covariance shift* in DeepLearning and increase trainning stability. I won't get into specifics, but the authors of the RMSNorm paper propose an alternative that doesn't apply mean centering, claiming their solution achieves similar performance while significantly reducing the computations necessary.
 The alternative: 
-$$
-a_i = \frac{a_i}{RMS(a)} 
-$$
+
+$$a_i = \frac{a_i}{RMS(a)} $$
+
 where
-$$
-RMS(a) = \sqrt{\frac{1}{n} \sum_{i=1}^n{a_i^2}}
-$$
+
+$$RMS(a) = \sqrt{\frac{1}{n} \sum_{i=1}^n{a_i^2}}$$
 
 
 
