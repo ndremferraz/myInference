@@ -1,1 +1,4 @@
 test.py
+.vscode
+__pycache__
+SmolLM_files

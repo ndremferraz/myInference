@@ -16,3 +16,10 @@ class Linear(Module):
     def __call__(self, x: jnp.ndarray):
         return jnp.dot(x, self.weights)
 
+class Embedding(Module):
+    def __init__(self, weights: np.ndarray):
+        super().__init__()
+        self.weights = weights
+
+    def __call__(self, x: jnp.ndarray):
+        return self.weights[x]

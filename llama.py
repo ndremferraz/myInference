@@ -86,15 +86,12 @@ class FFNSwiGLU(Module):
 
 class AttentionRoPE(Module):
     def __init__(self, 
-                 dims: int, 
                  wq = np.ndarray,
                  wk = np.ndarray,
                  wv = np.ndarray,
                  wo = np.ndarray):
         
         super().__init__()
-
-        self.dims = dims
 
         self.q_proj = Linear(weights=wq)
         self.k_proj = Linear(weights=wk)
@@ -124,12 +121,12 @@ class AttentionRoPE(Module):
 
 
 class LlamaRMSNorm(Module):
-    def __init__(self, eps: float = 1e-8, hidden_size: int = 512):
+    def __init__(self, norm_weights: jnp.ndarray ,eps: float = 1e-8):
         
         super().__init__()
 
         self.eps = eps
-        self.weight = jnp.ones((hidden_size))
+        self.weights = norm_weights
 
     def __call__(self, x: jnp.ndarray):
 
@@ -148,13 +145,13 @@ class LLamaTransformer(Module):
                  w_up: np.ndarray,
                  w_gate: np.ndarray,
                  w_down: np.ndarray,
+                 input_ln_weights: jnp.ndarray,
+                 post_attn_ln_weights: jnp.ndarray,
                  rms_norm_eps: float = 1e-8,
-                 hidden_size: int = 512,
                  ):
         super().__init__()
 
-        self.attention = AttentionRoPE(dims=hidden_size,
-                                       wq = wq,
+        self.attention = AttentionRoPE(wq = wq,
                                        wk = wk,
                                        wv = wv,
                                        wo = wo)
@@ -163,8 +160,8 @@ class LLamaTransformer(Module):
                              w_gate=w_gate, 
                              w_down=w_down)
 
-        self.input_layernorm = LlamaRMSNorm(eps=rms_norm_eps, hidden_size=hidden_size)
-        self.post_attention_layernorm = LlamaRMSNorm(eps=rms_norm_eps, hidden_size=hidden_size)
+        self.input_layernorm = LlamaRMSNorm(eps=rms_norm_eps, norm_weights=input_ln_weights)
+        self.post_attention_layernorm = LlamaRMSNorm(eps=rms_norm_eps, norm_weights=post_attn_ln_weights)
 
     def __call__(self, x: jnp.ndarray, rope_matrix: jnp.ndarray, attention_mask: jnp.ndarray):
 
