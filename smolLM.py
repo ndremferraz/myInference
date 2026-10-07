@@ -42,15 +42,15 @@ def init_transformer_layer(f, i, rms_norm_eps):
     q_proj = f.get_tensor(q_proj_name)
     v_proj = f.get_tensor(v_proj_name)
 
-    return LLamaTransformer(wq=q_proj,
-                            wk=k_proj,
-                            wv=v_proj,
-                            wo=o_proj,
-                            w_up=mlp_up,
-                            w_gate=mlp_gate,
-                            w_down=mlp_down,
-                            input_ln_weights=input_ln,
-                            post_attn_ln_weights=post_attn_ln,
+    return LLamaTransformer(wq=jnp.asarray(q_proj),
+                            wk=jnp.asarray(k_proj),
+                            wv=jnp.asarray(v_proj),
+                            wo=jnp.asarray(o_proj),
+                            w_up=jnp.asarray(mlp_up),
+                            w_gate=jnp.asarray(mlp_gate),
+                            w_down=jnp.asarray(mlp_down),
+                            input_ln_weights=jnp.asarray(input_ln),
+                            post_attn_ln_weights=jnp.asarray(post_attn_ln),
                             rms_norm_eps=rms_norm_eps)
 
 class SmolLM(Module):
@@ -82,7 +82,8 @@ class SmolLM(Module):
 
             self.layers = layer_list
 
-            self.last_ln = LlamaRMSNorm(eps=rms_norm_eps, norm_weights=f.get_tensor('model.norm.weight'))
+            norm_weights = f.get_tensor(tensors.pop())
+            self.last_ln = LlamaRMSNorm(eps=rms_norm_eps, norm_weights=jnp.asarray(norm_weights))
 
         def __call__(self, x):
 
