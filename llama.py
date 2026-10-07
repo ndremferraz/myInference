@@ -133,7 +133,7 @@ class LlamaRMSNorm(Module):
         variance = jnp.mean(x**2, axis=-1, keepdims=True)
         x_normalized = x / jnp.sqrt(variance + self.eps)
 
-        return x_normalized * self.weight
+        return x_normalized * self.weights
 
 
 class LLamaTransformer(Module):

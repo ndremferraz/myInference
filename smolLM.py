@@ -1,6 +1,8 @@
-import jax 
 import jax.numpy as jnp
 import numpy as np
+
+import jax.dlpack as jdl
+import torch
 
 from module import Module, Embedding
 from llama import RotaryEmbedding, LLamaTransformer, LlamaRMSNorm
@@ -14,7 +16,11 @@ def causal_mask(seq_len):
 
     return jnp.where(mask, -jnp.inf, 0.0)
 
-def init_transformer_layer(f, i, rms_norm_eps):
+def torch_to_jax(tensor: torch.Tensor):
+
+    return jdl.from_dlpack(tensor)
+
+def init_transformer_layer(f, i, rms_norm_eps, device):
 
     input_ln_name = f'model.layers.{i}.input_layernorm.weight'
     
@@ -29,28 +35,28 @@ def init_transformer_layer(f, i, rms_norm_eps):
     q_proj_name = f'model.layers.{i}.self_attn.q_proj.weight'
     v_proj_name = f'model.layers.{i}.self_attn.v_proj.weight'
 
-    input_ln = f.get_tensor(input_ln_name)
+    input_ln = f.get_tensor(input_ln_name).to(device)
 
-    mlp_down = f.get_tensor(mlp_down_name)
-    mlp_gate = f.get_tensor(mlp_gate_name)
-    mlp_up = f.get_tensor(mlp_up_name)
+    mlp_down = f.get_tensor(mlp_down_name).to(device)
+    mlp_gate = f.get_tensor(mlp_gate_name).to(device)
+    mlp_up = f.get_tensor(mlp_up_name).to(device)
 
-    post_attn_ln = f.get_tensor(post_attn_ln_name)
+    post_attn_ln = f.get_tensor(post_attn_ln_name).to(device)
 
-    k_proj = f.get_tensor(k_proj_name)
-    o_proj = f.get_tensor(o_proj_name)
-    q_proj = f.get_tensor(q_proj_name)
-    v_proj = f.get_tensor(v_proj_name)
+    k_proj = f.get_tensor(k_proj_name).to(device)
+    o_proj = f.get_tensor(o_proj_name).to(device)
+    q_proj = f.get_tensor(q_proj_name).to(device)
+    v_proj = f.get_tensor(v_proj_name).to(device)
 
-    return LLamaTransformer(wq=jnp.asarray(q_proj),
-                            wk=jnp.asarray(k_proj),
-                            wv=jnp.asarray(v_proj),
-                            wo=jnp.asarray(o_proj),
-                            w_up=jnp.asarray(mlp_up),
-                            w_gate=jnp.asarray(mlp_gate),
-                            w_down=jnp.asarray(mlp_down),
-                            input_ln_weights=jnp.asarray(input_ln),
-                            post_attn_ln_weights=jnp.asarray(post_attn_ln),
+    return LLamaTransformer(wq=torch_to_jax(q_proj),
+                            wk=torch_to_jax(k_proj),
+                            wv=torch_to_jax(v_proj),
+                            wo=torch_to_jax(o_proj),
+                            w_up=torch_to_jax(mlp_up),
+                            w_gate=torch_to_jax(mlp_gate),
+                            w_down=torch_to_jax(mlp_down),
+                            input_ln_weights=torch_to_jax(input_ln),
+                            post_attn_ln_weights=torch_to_jax(post_attn_ln),
                             rms_norm_eps=rms_norm_eps)
 
 class SmolLM(Module):
@@ -60,45 +66,45 @@ class SmolLM(Module):
                  num_hidden_layers: int = 8,
                  rope_theta: float = 10000.0,
                  rms_norm_eps: float = 1e-8,
-                 hidden_size: int = 512):
+                 hidden_size: int = 512,
+                 device: str = "cpu"):
         super().__init__()
 
+        self.device = device
 
         with safe_open(safetensor_filepath, framework="pt") as f:
 
             tensors = f.keys()
 
-            embedding_weights = f.get_tensor(tensors.pop(0))
+            embedding_weights = f.get_tensor(tensors.pop(0)).to(self.device)
 
-            self.embedding = Embedding(embedding_weights)
+            self.embedding = Embedding(torch_to_jax(embedding_weights))
             self.rope_encoder = RotaryEmbedding(dims=hidden_size, rope_theta=rope_theta)
 
             layer_list = []
 
             for i in range(num_hidden_layers):
 
-                layer = init_transformer_layer(f, i, rms_norm_eps)
+                layer = init_transformer_layer(f, i, rms_norm_eps, self.device)
                 layer_list.append(layer)
 
             self.layers = layer_list
 
-            norm_weights = f.get_tensor(tensors.pop())
-            self.last_ln = LlamaRMSNorm(eps=rms_norm_eps, norm_weights=jnp.asarray(norm_weights))
+            norm_weights = f.get_tensor(tensors.pop()).to(self.device)
+            self.last_ln = LlamaRMSNorm(eps=rms_norm_eps, norm_weights=torch_to_jax(norm_weights))
 
-        def __call__(self, x):
+    def __call__(self, x):
 
-            position_ids = jnp.arange(x.shape[1])
-            attn_mask = causal_mask(x.shape[1])
+        position_ids = jnp.arange(x.shape[1])
+        attn_mask = causal_mask(x.shape[1])
 
-            x = self.embedding(x)
-            rope_matrix = self.rope_encoder(x=x, position_ids=position_ids, attn_mask=attn_mask)
+        x = self.embedding(x)
+        rope_matrix = self.rope_encoder(x=x, position_ids=position_ids)
 
-            for layers in self.layers:
-                x = layers(x, rope_matrix, attn_mask)
+        for layer in self.layers:
+            x = layer(x, rope_matrix, attn_mask)
 
-            x = self.last_ln(x)
+        x = self.last_ln(x)
 
-            return x
-
-
+        return x
 
