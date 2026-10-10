@@ -1,15 +1,12 @@
-import jax 
 import jax.numpy as jnp
-import numpy as np
+import jax
+from flax import nnx
 
-from module import Module, Linear
+def rotate_half(x):
 
-def rotate_half(x: jnp.ndarray):
-
-    x1 = x[..., : x.shape[-1] // 2]
-    x2 = x[..., x.shape[-1] // 2:]
-    return jnp.concatenate([-x2, x1], axis=-1)
-
+   x1 = x[..., : x.shape[-1] // 2] 
+   x2 = x[..., x.shape[-1] // 2:] 
+   return jnp.concatenate([-x2, x1], axis=-1)
 
 def apply_rope(     q: jnp.ndarray, 
                     k: jnp.ndarray, 
@@ -26,10 +23,9 @@ def apply_rope(     q: jnp.ndarray,
     return q, k
 
 
-class RotaryEmbedding(Module):
+class RotaryPositionalEmbedding(nnx.Module):
+
     def __init__(self, dims: int, rope_theta: float):
-        
-        super().__init__()
 
         self.dims = dims
         self.rope_theta = rope_theta
@@ -44,139 +40,121 @@ class RotaryEmbedding(Module):
 
         position_ids_expanded = jnp.expand_dims(position_ids, axis=-1)
         freqs = jnp.repeat(self.frequencies, repeats=2, axis=-1)
-
+       
         rotation_angles = position_ids_expanded * freqs
-
+       
         return jnp.cos(rotation_angles), jnp.sin(rotation_angles)
 
 
-class SiLU(Module):
-    def __init__(self):
-        super().__init__()
+class SiLU(nnx.Module):
 
     def __call__(self, x: jnp.ndarray):
-
-        sigmoid = 1.0 / (1.0 + jnp.exp(-x))
-        return x * sigmoid
+        return x * jax.nn.sigmoid(x)
 
 
-class FFNSwiGLU(Module):
-    def __init__(self,
-                 w_up: np.ndarray,
-                 w_gate: np.ndarray,
-                 w_down: np.ndarray):
-        
-        super().__init__()
+class FFNSwiGLU(nnx.Module):
+
+    def __init__(self, hidden_dim: int):
+        self.hidden_dim = hidden_dim
+
+        self.up_proj = nnx.Linear(hidden_dim, hidden_dim)
+        self.gate_proj = nnx.Linear(hidden_dim, hidden_dim)
 
         self.act_fn = SiLU()
-        self.up_proj = Linear(w_up)
-        self.gate_proj = Linear(w_gate)
-        self.down_proj = Linear(w_down)
+        self.down_proj = nnx.Linear(hidden_dim, hidden_dim)
 
     def __call__(self, x: jnp.ndarray):
+        x1 = self.up_proj(x)
+        x2 = self.gate_proj(x)
+        x3 = self.down_proj(x1 * self.act_fn(x2))
+        return x3
 
-        up = self.up_proj(x)
-        gate = self.gate_proj(x)
-        gate_act = self.act_fn(gate)
-        
-        swiglu = up * gate_act
+class RoPEAttention(nnx.Module):
+    def __init__(self,
+                 hidden_dim: int,
+                 head_dim: int,
+                 q_heads: int,
+                 kv_heads: int):
 
-        return self.down_proj(swiglu)
+        self.q_heads = q_heads
+        self.head_dim = head_dim
+        self.kv_heads = kv_heads
+        self.hidden_dim = hidden_dim
 
+        self.q_proj = nnx.Linear(hidden_dim, q_heads * head_dim)
+        self.k_proj = nnx.Linear(hidden_dim, kv_heads * head_dim)
+        self.v_proj = nnx.Linear(hidden_dim, kv_heads * head_dim)
+        self.o_proj = nnx.Linear(q_heads * head_dim, hidden_dim)
 
-class AttentionRoPE(Module):
-    def __init__(self, 
-                 wq = np.ndarray,
-                 wk = np.ndarray,
-                 wv = np.ndarray,
-                 wo = np.ndarray):
-        
-        super().__init__()
-
-        self.q_proj = Linear(weights=wq)
-        self.k_proj = Linear(weights=wk)
-        self.v_proj = Linear(weights=wv)
-        self.o_proj = Linear(weights=wo)
-
-    def __call__(self, 
-                 x: jnp.ndarray,
-                 rope_matrix: jnp.ndarray, 
+    def __call__(self,
+                 x: jnp.ndarray, 
+                 rope_matrix: jnp.ndarray,
                  attention_mask: jnp.ndarray):
 
         cos, sin = rope_matrix
 
-        query = self.q_proj(x)
-        key = self.k_proj(x)
-        value = self.v_proj(x)
+        '''
+        I STILL NEED TO IMPLEMENT GQA AND SEE HOW IT PAIRS WITH ROPE
+        '''
 
-        query, key = apply_rope(query, key, cos, sin)
+        q = self.q_proj(x)
+        k = self.k_proj(x)
+        v = self.v_proj(x)
 
-        attn = jnp.dot(query, key.T) / jnp.sqrt(self.dims)
+        q = q.reshape(*q.shape[:-1], self.q_heads // self.kv_heads, self.kv_heads * self.head_dim)
+
+        attn = q @ k.mT / jnp.sqrt(self.head_dim * self.kv_heads)
         attn = attn + attention_mask
 
-        attn_logits = jax.nn.softmax(attn)
-        attn_o = self.o_proj(attn_logits @ value)
+        attn_logprobs = jax.nn.log_softmax(attn, axis=-1)
+
+        attn_o = attn_logprobs @ v
 
         return attn_o
 
 
-class LlamaRMSNorm(Module):
-    def __init__(self, norm_weights: jnp.ndarray ,eps: float = 1e-8):
-        
-        super().__init__()
+class LlamaRMSNorm(nnx.Module):
 
+    def __init__(self, hidden_dim: int, eps: float = 1e-6):
+        self.hidden_dim = hidden_dim
         self.eps = eps
-        self.weights = norm_weights
+        self.weight = nnx.Parameter(jnp.ones(hidden_dim))
 
     def __call__(self, x: jnp.ndarray):
 
         variance = jnp.mean(x**2, axis=-1, keepdims=True)
-        x_normalized = x / jnp.sqrt(variance + self.eps)
+        x = x * jax.lax.rsqrt(variance + self.eps)
+        return self.weight * x
 
-        return x_normalized * self.weights
 
+class LLamaTransformer(nnx.Module):
 
-class LLamaTransformer(Module):
-    def __init__(self,
-                 wq: np.ndarray,
-                 wk: np.ndarray,
-                 wv: np.ndarray,
-                 wo: np.ndarray,
-                 w_up: np.ndarray,
-                 w_gate: np.ndarray,
-                 w_down: np.ndarray,
-                 input_ln_weights: jnp.ndarray,
-                 post_attn_ln_weights: jnp.ndarray,
-                 rms_norm_eps: float = 1e-8,
+    def __init__(self, 
+                 hidden_dim: int,
+                 head_dim: int,
+                 q_heads: int,
+                 kv_heads: int,
+                 rms_eps: float = 1e-6,
+                 rope_theta: float = 10000.0,
                  ):
-        super().__init__()
 
-        self.attention = AttentionRoPE(wq = wq,
-                                       wk = wk,
-                                       wv = wv,
-                                       wo = wo)
-        
-        self.ffn = FFNSwiGLU(w_up=w_up, 
-                             w_gate=w_gate, 
-                             w_down=w_down)
+        self.attention = RoPEAttention(hidden_dim, head_dim, q_heads, kv_heads)
+        self.ffn = FFNSwiGLU(hidden_dim)
 
-        self.input_layernorm = LlamaRMSNorm(eps=rms_norm_eps, norm_weights=input_ln_weights)
-        self.post_attention_layernorm = LlamaRMSNorm(eps=rms_norm_eps, norm_weights=post_attn_ln_weights)
+        self.input_lnorm = LlamaRMSNorm(hidden_dim, rms_eps)
+        self.post_attn_lnorm = LlamaRMSNorm(hidden_dim, rms_eps)
 
     def __call__(self, x: jnp.ndarray, rope_matrix: jnp.ndarray, attention_mask: jnp.ndarray):
 
         residual = x
-        x = self.input_layernorm(x)
+        x = self.input_lnorm(x)
 
         x = self.attention(x, rope_matrix, attention_mask)
-        x = residual + x
-
+        x = x + residual
         residual = x
 
-        x = self.post_attention_layernorm(x)
+        x = self.post_attn_lnorm(x)
         x = self.ffn(x)
 
-        x = residual + x
-
+        x = x + residual
         return x
-
