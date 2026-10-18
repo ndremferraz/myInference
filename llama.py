@@ -14,10 +14,13 @@ def apply_rope(     q: jnp.ndarray,
                     sin: jnp.ndarray,
                     ):
 
+    cos = cos[..., None, :]
+    sin = sin[..., None, :]
+
     q_half_neg = rotate_half(q)
     k_half_neg = rotate_half(k)
 
-    q = (q * cos - q_half_neg * sin)
+    q = (q * cos + q_half_neg * sin)
     k = (k * cos + k_half_neg * sin)
 
     return q, k
@@ -34,12 +37,12 @@ class RotaryPositionalEmbedding(nnx.Module):
     @staticmethod
     def _compute_frequencies(dims: int, rope_theta: float):
             
-        return rope_theta ** ( (-1) * jnp.arange(0, dims, 2) )
+        return rope_theta ** ( (-1) * jnp.arange(0, dims, 2) / dims)
 
     def __call__(self, x: jnp.ndarray, position_ids: jnp.ndarray):
 
         position_ids_expanded = jnp.expand_dims(position_ids, axis=-1)
-        freqs = jnp.repeat(self.frequencies, repeats=2, axis=-1)
+        freqs = jnp.concatenate([self.frequencies, self.frequencies])
        
         rotation_angles = position_ids_expanded * freqs
        
@@ -54,14 +57,15 @@ class SiLU(nnx.Module):
 
 class FFNSwiGLU(nnx.Module):
 
-    def __init__(self, hidden_dim: int):
+    def __init__(self, hidden_dim: int, intermediate_dim: int):
         self.hidden_dim = hidden_dim
+        self.intermediate_dim = intermediate_dim
 
-        self.up_proj = nnx.Linear(hidden_dim, hidden_dim)
-        self.gate_proj = nnx.Linear(hidden_dim, hidden_dim)
+        self.up_proj = nnx.Linear(hidden_dim, intermediate_dim, use_bias=False, rngs=nnx.Rngs(0))
+        self.gate_proj = nnx.Linear(hidden_dim, intermediate_dim, use_bias=False, rngs=nnx.Rngs(0))
 
         self.act_fn = SiLU()
-        self.down_proj = nnx.Linear(hidden_dim, hidden_dim)
+        self.down_proj = nnx.Linear(intermediate_dim, hidden_dim, use_bias=False, rngs=nnx.Rngs(0))
 
     def __call__(self, x: jnp.ndarray):
         x1 = self.up_proj(x)
@@ -81,10 +85,10 @@ class RoPEAttention(nnx.Module):
         self.kv_heads = kv_heads
         self.hidden_dim = hidden_dim
 
-        self.q_proj = nnx.Linear(hidden_dim, q_heads * head_dim)
-        self.k_proj = nnx.Linear(hidden_dim, kv_heads * head_dim)
-        self.v_proj = nnx.Linear(hidden_dim, kv_heads * head_dim)
-        self.o_proj = nnx.Linear(q_heads * head_dim, hidden_dim)
+        self.q_proj = nnx.Linear(hidden_dim, q_heads * head_dim, use_bias=False, rngs=nnx.Rngs(0))
+        self.k_proj = nnx.Linear(hidden_dim, kv_heads * head_dim, use_bias=False, rngs=nnx.Rngs(0))
+        self.v_proj = nnx.Linear(hidden_dim, kv_heads * head_dim, use_bias=False, rngs=nnx.Rngs(0))
+        self.o_proj = nnx.Linear(q_heads * head_dim, hidden_dim, use_bias=False, rngs=nnx.Rngs(0))
 
     def __call__(self,
                  x: jnp.ndarray, 
@@ -93,24 +97,29 @@ class RoPEAttention(nnx.Module):
 
         cos, sin = rope_matrix
 
-        '''
-        I STILL NEED TO IMPLEMENT GQA AND SEE HOW IT PAIRS WITH ROPE
-        '''
-
         q = self.q_proj(x)
         k = self.k_proj(x)
         v = self.v_proj(x)
 
-        q = q.reshape(*q.shape[:-1], self.q_heads // self.kv_heads, self.kv_heads * self.head_dim)
+        q = q.reshape(*q.shape[:-1], self.q_heads, self.head_dim)
+        k = k.reshape(*k.shape[:-1], self.kv_heads, self.head_dim)
+        v = v.reshape(*v.shape[:-1], self.kv_heads, self.head_dim)
 
-        attn = q @ k.mT / jnp.sqrt(self.head_dim * self.kv_heads)
+        q, k = apply_rope(q, k, cos, sin)
+
+        k = jnp.repeat(k, self.q_heads // self.kv_heads, axis=-2)
+        v = jnp.repeat(v, self.q_heads // self.kv_heads, axis=-2)
+
+        attn = jnp.einsum('...thd,...shd->...hts', q, k) / jnp.sqrt(self.head_dim)
         attn = attn + attention_mask
 
-        attn_logprobs = jax.nn.log_softmax(attn, axis=-1)
+        attn_logits = jax.nn.softmax(attn, axis=-1)
 
-        attn_o = attn_logprobs @ v
+        attn_o = jnp.einsum('...hts,...shd->...thd', attn_logits, v)
 
-        return attn_o
+        attn_o = attn_o.reshape(*attn_o.shape[:-2], self.q_heads * self.head_dim)
+
+        return self.o_proj(attn_o)
 
 
 class LlamaRMSNorm(nnx.Module):
@@ -118,7 +127,7 @@ class LlamaRMSNorm(nnx.Module):
     def __init__(self, hidden_dim: int, eps: float = 1e-6):
         self.hidden_dim = hidden_dim
         self.eps = eps
-        self.weight = nnx.Parameter(jnp.ones(hidden_dim))
+        self.weight = nnx.Param(jnp.ones(hidden_dim))
 
     def __call__(self, x: jnp.ndarray):
 
@@ -131,15 +140,15 @@ class LLamaTransformer(nnx.Module):
 
     def __init__(self, 
                  hidden_dim: int,
+                 intermediate_dim: int,
                  head_dim: int,
                  q_heads: int,
                  kv_heads: int,
                  rms_eps: float = 1e-6,
-                 rope_theta: float = 10000.0,
                  ):
 
         self.attention = RoPEAttention(hidden_dim, head_dim, q_heads, kv_heads)
-        self.ffn = FFNSwiGLU(hidden_dim)
+        self.ffn = FFNSwiGLU(hidden_dim, intermediate_dim)
 
         self.input_lnorm = LlamaRMSNorm(hidden_dim, rms_eps)
         self.post_attn_lnorm = LlamaRMSNorm(hidden_dim, rms_eps)

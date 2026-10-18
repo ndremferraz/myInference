@@ -167,6 +167,47 @@ where
 $$RMS(a) = \sqrt{\frac{1}{n} \sum_{i=1}^n{a_i^2}}$$
 
 
+## [Grouped-Query Attention and KV-cache](https://arxiv.org/pdf/2305.13245)
+
+Before understanding what Group-Query Attention it is important to understand the concept that motivates it in the first place, KV-cache, which is an optimization technique used by speed up transformer inference by eliminating redundant computations in the attention mechanism. 
+
+In LLM inference, for every new token to at position $t$ be computed, it is necessary to compute the attention scores of every single layer given by
+$$
+Attn = softmax(\frac{{q_T}{K^T}}{\sqrt{d_k}})V
+$$
+Where $K$ and $V$, composed of the key and values for all $n=0,1,...,t:
+
+$$
+K =
+\begin{bmatrix}
+k_0 \\
+k_1 \\
+\vdots \\
+k_n
+\end{bmatrix}
+
+V =
+\begin{bmatrix}
+v_0 \\
+v_1 \\
+\vdots \\
+v_n
+\end{bmatrix}
+$$
+
+In order to make the forward pass for a single token is necessary to calculate $k = W_k^{T}x$ and $v = W_v^{T}x$ for token $t$ and every single token that came before it. However, we know that because we are working with causal models, the $k$ and $v$ only depend on past tokens and therefore once they are computed they do not change. KV-cache name for the storage of past $k$ and $v$ values to avoid having to recompute them in the forward pass.  
+
+KV-caches reduce the compute demands but as the context window increases the size of the KV-cache becomes a limiting factor, occupying more memory and requiring more bandwidth.
+Grouped-Query Attention reduces the size of KV-caches by altering Multi-Headed Attention to have less key and value heads while keeping the same number of query heads:
+
+![Figure 1. Comparison between Multi-Head and Grouped-Query, where a single key shares a group of queries](image.png)
+
+It is important to point out that for GQA to work the number of query heads needs to be divisible by the number of key-value heads. This is an optimization technique but the reason I am approaching this now instead of later is because GQA affects the number of parameters in the model and it is not possible to re-create SmolLM2 without understanding it.
+ 
+
+
+
+
 
 
 
